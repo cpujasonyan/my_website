@@ -1,0 +1,368 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>早自习朗读音量监督</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            background: linear-gradient(135deg, #87ceeb, #b0e0e6);
+            transition: background 0.5s ease;
+            overflow: hidden;
+            position: relative;
+        }
+
+        .container {
+            text-align: center;
+            padding: 40px;
+            background: rgba(255, 255, 255, 0.85);
+            border-radius: 20px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.15);
+            max-width: 600px;
+            width: 90%;
+            position: relative;
+            overflow: visible;
+        }
+
+        h1 {
+            font-size: 2.5rem;
+            margin-bottom: 30px;
+            color: #333;
+        }
+
+        .decibel-display {
+            font-size: 5rem;
+            font-weight: bold;
+            margin: 30px 0;
+            color: #2563eb;
+            transition: color 0.3s ease;
+        }
+
+        .decibel-label {
+            font-size: 1.2rem;
+            color: #666;
+        }
+
+        .status {
+            margin: 20px 0;
+            font-size: 1.1rem;
+            padding: 10px 20px;
+            border-radius: 10px;
+            background: #e0f2fe;
+            color: #0369a1;
+        }
+
+        .start-btn {
+            padding: 15px 40px;
+            font-size: 1.2rem;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 50px;
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
+            margin-top: 20px;
+        }
+
+        .start-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(102, 126, 234, 0.4);
+        }
+
+        .start-btn:active {
+            transform: translateY(0);
+        }
+
+        .start-btn:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        /* 小鸟容器 */
+        .birds-container {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            z-index: 5;
+        }
+
+        .bird {
+            position: absolute;
+            font-size: 2rem;
+            animation: float 3s ease-in-out infinite;
+            user-select: none;
+        }
+
+        @keyframes float {
+            0%, 100% {
+                transform: translateY(0) rotate(0deg);
+            }
+            25% {
+                transform: translateY(-10px) rotate(-5deg);
+            }
+            75% {
+                transform: translateY(10px) rotate(5deg);
+            }
+        }
+
+        /* 不同的小鸟表情 */
+        .bird:nth-child(3n) {
+            animation-delay: 0s;
+        }
+        .bird:nth-child(3n+1) {
+            animation-delay: 0.5s;
+        }
+        .bird:nth-child(3n+2) {
+            animation-delay: 1s;
+        }
+
+        /* 音量条 */
+        .volume-bar {
+            width: 100%;
+            height: 20px;
+            background: #e5e7eb;
+            border-radius: 10px;
+            overflow: hidden;
+            margin: 20px 0;
+        }
+
+        .volume-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #3b82f6, #ef4444);
+            border-radius: 10px;
+            transition: width 0.1s ease;
+        }
+
+        .bird-count {
+            font-size: 1.5rem;
+            margin-top: 20px;
+            color: #666;
+        }
+
+        .bird-icon {
+            display: inline-block;
+            font-size: 1.8rem;
+            margin: 0 5px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="birds-container" id="birdsContainer"></div>
+        <h1>🎓 早自习朗读监督</h1>
+
+        <div class="status" id="status">
+            点击下方按钮开始监控
+        </div>
+
+        <div class="decibel-display" id="decibelDisplay">0</div>
+        <div class="decibel-label">分贝 (dB)</div>
+
+        <div class="volume-bar">
+            <div class="volume-fill" id="volumeFill" style="width: 0%"></div>
+        </div>
+
+        <div class="bird-count" id="birdCount">
+            <span class="bird-icon">🐦</span> <span id="birdNum">0</span> 只小鸟
+        </div>
+
+        <button class="start-btn" id="startBtn" onclick="startMonitoring()">
+            🎤 开始监控
+        </button>
+    </div>
+
+    <script>
+        let audioContext;
+        let analyser;
+        let microphone;
+        let isRunning = false;
+        let animationId;
+
+        // 小鸟表情
+        const birdEmojis = ['🐦', '🐥', '🐧', '🦆', '🦅', '🦉', '🕊️', '🦜'];
+
+        // 计算分贝值
+        function getDecibels(analyser) {
+            const dataArray = new Uint8Array(analyser.frequencyBinCount);
+            analyser.getByteFrequencyData(dataArray);
+
+            let sum = 0;
+            for (let i = 0; i < dataArray.length; i++) {
+                sum += dataArray[i];
+            }
+
+            const average = sum / dataArray.length;
+
+            // 将 0-255 范围映射到 0-100 分贝
+            // 使用对数刻度更符合人耳感知
+            if (average <= 0) return 0;
+            const db = Math.round((average / 255) * 100);
+            return Math.min(db, 100);
+        }
+
+        // 根据分贝计算背景颜色
+        function getBackgroundColor(db) {
+            // 0分贝 = 蓝色渐变 (135, 206, 235) -> (176, 224, 230)
+            // 100分贝 = 暖橙红色渐变 (255, 100, 50) -> (255, 160, 80)
+            const ratio = db / 100;
+
+            const r1 = Math.round(135 + (255 - 135) * ratio);
+            const g1 = Math.round(206 + (100 - 206) * ratio);
+            const b1 = Math.round(235 + (50 - 235) * ratio);
+
+            const r2 = Math.round(176 + (255 - 176) * ratio);
+            const g2 = Math.round(224 + (160 - 224) * ratio);
+            const b2 = Math.round(230 + (80 - 230) * ratio);
+
+            return `linear-gradient(135deg, rgb(${r1}, ${g1}, ${b1}), rgb(${r2}, ${g2}, ${b2}))`;
+        }
+
+        // 根据分贝计算小鸟数量
+        function getBirdCount(db) {
+            // 每10分贝增加1只小鸟，最多20只
+            return Math.min(Math.floor(db / 5), 20);
+        }
+
+        // 更新小鸟显示
+        function updateBirds(count) {
+            const container = document.getElementById('birdsContainer');
+            const currentBirds = container.children.length;
+
+            if (count > currentBirds) {
+                // 添加小鸟
+                for (let i = 0; i < count - currentBirds; i++) {
+                    const bird = document.createElement('div');
+                    bird.className = 'bird';
+                    bird.textContent = birdEmojis[Math.floor(Math.random() * birdEmojis.length)];
+                    bird.style.left = Math.random() * 90 + 5 + '%';
+                    bird.style.top = Math.random() * 80 + 10 + '%';
+                    bird.style.transform = `scale(${0.8 + Math.random() * 0.6})`;
+                    container.appendChild(bird);
+                }
+            } else if (count < currentBirds) {
+                // 移除小鸟
+                for (let i = 0; i < currentBirds - count; i++) {
+                    if (container.lastChild) {
+                        container.removeChild(container.lastChild);
+                    }
+                }
+            }
+
+            document.getElementById('birdNum').textContent = count;
+        }
+
+        // 监控循环
+        function monitor() {
+            if (!isRunning) return;
+
+            const db = getDecibels(analyser);
+
+            // 更新分贝显示
+            document.getElementById('decibelDisplay').textContent = db;
+
+            // 更新背景颜色
+            document.body.style.background = getBackgroundColor(db);
+
+            // 更新分贝颜色
+            const display = document.getElementById('decibelDisplay');
+            if (db < 30) {
+                display.style.color = '#3b82f6';
+            } else if (db < 60) {
+                display.style.color = '#f59e0b';
+            } else {
+                display.style.color = '#ef4444';
+            }
+
+            // 更新音量条
+            document.getElementById('volumeFill').style.width = db + '%';
+
+            // 更新小鸟
+            updateBirds(getBirdCount(db));
+
+            // 更新状态文字
+            const status = document.getElementById('status');
+            if (db < 30) {
+                status.textContent = '🔇 安静 - 继续保持';
+                status.style.background = '#dbeafe';
+                status.style.color = '#1e40af';
+            } else if (db < 60) {
+                status.textContent = '🔊 正常朗读中';
+                status.style.background = '#fef3c7';
+                status.style.color = '#92400e';
+            } else {
+                status.textContent = '📢 声音偏大 - 请注意';
+                status.style.background = '#fee2e2';
+                status.style.color = '#991b1b';
+            }
+
+            animationId = requestAnimationFrame(monitor);
+        }
+
+        // 开始监控
+        async function startMonitoring() {
+            const btn = document.getElementById('startBtn');
+
+            if (isRunning) {
+                // 停止监控
+                isRunning = false;
+                cancelAnimationFrame(animationId);
+                btn.textContent = '🎤 开始监控';
+                document.getElementById('status').textContent = '已暂停监控';
+                btn.disabled = false;
+                return;
+            }
+
+            btn.disabled = true;
+            btn.textContent = '⏳ 正在初始化...';
+
+            try {
+                // 请求麦克风权限
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+
+                audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                analyser = audioContext.createAnalyser();
+                analyser.fftSize = 256;
+
+                microphone = audioContext.createMediaStreamSource(stream);
+                microphone.connect(analyser);
+
+                isRunning = true;
+                btn.textContent = '⏹️ 停止监控';
+                btn.disabled = false;
+
+                document.getElementById('status').textContent = '🎤 监控中...';
+                monitor();
+
+            } catch (err) {
+                console.error('无法访问麦克风:', err);
+                document.getElementById('status').textContent = '❌ 无法访问麦克风，请检查权限设置';
+                btn.disabled = false;
+                btn.textContent = '🎤 开始监控';
+            }
+        }
+
+        // 页面卸载时清理
+        window.addEventListener('beforeunload', () => {
+            if (audioContext) {
+                audioContext.close();
+            }
+        });
+    </script>
+</body>
+</html>
